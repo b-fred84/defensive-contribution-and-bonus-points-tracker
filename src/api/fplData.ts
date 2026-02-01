@@ -1,32 +1,73 @@
 import type {
   Team,
   Fixture,
-  FixtureApi,
-  LivePlayer,
-  StaticPlayer,
-  FixturePlayer,
+  ApiFixture,
+  ApiLivePlayer,
+  ApiStaticPlayer,
+  Player,
 } from "./types";
 
+//FETCH HELPERS
+
+const fetchTeamsMap = async (): Promise<Map<number, string>> => {
+  const res = await fetch("/fpl/api/bootstrap-static/");
+  if (!res.ok) throw new Error("Failed to fetch teams");
+
+  const data: { teams: Team[] } = await res.json();
+
+  return new Map(data.teams.map((t) => [t.id, t.name]));
+};
+
+const fetchFixtures = async (): Promise<ApiFixture[]> => {
+  const res = await fetch("/fpl/api/fixtures/");
+  if (!res.ok) throw new Error("Failed to fetch fixtures");
+
+  return res.json();
+};
+
+const fetchStaticPlayersMap = async (): Promise<
+  Map<number, ApiStaticPlayer>
+> => {
+  const res = await fetch("/fpl/api/bootstrap-static/");
+  if (!res.ok) throw new Error("Failed to fetch static players");
+  const data: { elements: ApiStaticPlayer[] } = await res.json();
+  return new Map(data.elements.map((p) => [p.id, p]));
+};
+
+const fetchLivePlayers = async (gameweek: number): Promise<ApiLivePlayer[]> => {
+  const res = await fetch(`/fpl/api/event/${gameweek}/live/`);
+  if (!res.ok) throw new Error("Failed to fetch live players");
+  const data = await res.json();
+  return data.elements;
+};
+
+//Mapping helper
+const toPlayer = (
+  lp: ApiLivePlayer,
+  sp: ApiStaticPlayer,
+  fixtureId: number
+): Player => ({
+  id: lp.id,
+  web_name: sp.web_name,
+  team: sp.team,
+  element_type: sp.element_type,
+  minutes: lp.stats.minutes,
+  total_points: lp.stats.total_points,
+  bps: lp.stats.bps,
+  defensive_contribution: lp.stats.defensive_contribution,
+  fixture: fixtureId,
+});
+
 export const fetchFixturesAndPlayersForCurrentGameweek = async (
-  gameweek: number
+  gameweek: number,
 ): Promise<Fixture[]> => {
   try {
-    // fetch team names from bootstrap endpoint
-    const teamsResponse = await fetch("fpl/api/bootstrap-static/");
-    if (!teamsResponse.ok) throw new Error("Failed to fetch teams");
-    const teamsData: { teams: Team[] } = await teamsResponse.json();
+    const teamsMap = await fetchTeamsMap();
+    const fixtureData = await fetchFixtures();
+    const staticPlayersMap = await fetchStaticPlayersMap();
+    const livePlayers = await fetchLivePlayers(gameweek);
 
-    //map team id to team name
-    const teamsMap = new Map<number, string>();
-    teamsData.teams.forEach((team) => {
-      teamsMap.set(team.id, team.name);
-    });
-
-    //fetch fixtures
-    const fixtureResponse = await fetch("fpl/api/fixtures/");
-    if (!fixtureResponse) throw new Error("Failed to fetch fixtures");
-    const fixtureData: FixtureApi[] = await fixtureResponse.json();
-
+    //map fixtures to shape that fits UI model
     const gwFixtures: Fixture[] = fixtureData
       .filter((f) => f.event === gameweek)
       .map((f) => ({
@@ -37,44 +78,21 @@ export const fetchFixturesAndPlayersForCurrentGameweek = async (
         kickoff_time: f.kickoff_time,
       }));
 
-    // Fetch static players data (names etc from bottstrapStatic endpoint)
-    const staticPlayersRes = await fetch("/fpl/api/bootstrap-static/");
-    const staticPlayersData = await staticPlayersRes.json();
-    const staticPlayers: StaticPlayer[] = staticPlayersData.elements;
-
-    // Fetch live players
-    const livePlayersRes = await fetch(`/fpl/api/event/${gameweek}/live/`);
-    const livePlayersData = await livePlayersRes.json();
-    const livePlayers: LivePlayer[] = livePlayersData.elements;
-
-    // Merge players into fixtures
+    // Attach players into fixtures
     const fixturesWithPlayers = gwFixtures.map((fix) => {
-      const playersForFixture: FixturePlayer[] = livePlayers
+      const playersForFixture: Player[] = livePlayers
         .filter(
           (lp) =>
-            lp.stats.minutes > 0 && lp.explain.some((e) => e.fixture === fix.id)
+            lp.stats.minutes > 0 &&
+            lp.explain.some((e) => e.fixture === fix.id),
         )
         .map((lp) => {
-          const sp = staticPlayers.find((sp) => sp.id === lp.id);
-          if (!sp) return null;
-
-          return sp
-            ? {
-                id: lp.id,
-                web_name: sp.web_name,
-                team: sp.team,
-                element_type: sp.element_type,
-                minutes: lp.stats.minutes,
-                total_points: lp.stats.total_points,
-                bps: lp.stats.bps,
-                defensive_contribution: lp.stats.defensive_contribution,
-                fixture: fix.id,
-              }
-            : null;
+          const sp = staticPlayersMap.get(lp.id);
+          return sp ? toPlayer(lp, sp, fix.id) : null;
         })
-        .filter((p): p is FixturePlayer => p !== null);
+        .filter((p): p is Player => p !== null);
 
-      return { ...fix, players: playersForFixture };
+      return { ...fix, playersForFixture };
     });
 
     console.log("Fixtures with players:", fixturesWithPlayers);
@@ -83,4 +101,15 @@ export const fetchFixturesAndPlayersForCurrentGameweek = async (
     console.error(err);
     return [];
   }
+};
+
+export const fetchCurrentGameweek = async (): Promise<number> => {
+  const res = await fetch("/fpl/api/bootstrap-static/");
+  if (!res.ok) throw new Error("Failed to fetch bootstrap data");
+
+  const data = await res.json();
+  const currentEvent = data.events.find((e: any) => e.is_current);
+
+  if (!currentEvent) throw new Error("No current gameweek found");
+  return currentEvent.id;
 };

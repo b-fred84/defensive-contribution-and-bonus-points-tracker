@@ -4,8 +4,8 @@ export interface Team {
   short_name: string;
 }
 
-//for fetching from api
-export interface FixtureApi {
+//api models/types
+export interface ApiFixture {
   id: number;
   event: number;
   team_h: number;
@@ -13,23 +13,14 @@ export interface FixtureApi {
   kickoff_time: string;
 }
 
-//for displaying with team names rather than id numbers
-export interface Fixture {
-  id: number;
-  event: number;
-  team_h: string;
-  team_a: string;
-  kickoff_time: string;
-}
-
-export interface StaticPlayer {
+export interface ApiStaticPlayer {
   id: number;
   web_name: string;
   team: number;
   element_type: number; //position id 1=gk, 2=def, 3=mid, 4=fwd
 }
 
-export interface LivePlayer {
+export interface ApiLivePlayer {
   id: number;
   stats: {
     minutes: number;
@@ -42,8 +33,17 @@ export interface LivePlayer {
   }[];
 }
 
-//for display player data on ui
-export interface FixturePlayer {
+//Ui models/types
+
+export interface Fixture {
+  id: number;
+  event: number;
+  team_h: string;
+  team_a: string;
+  kickoff_time: string;
+}
+
+export interface Player {
   id: number;
   web_name: string;
   team: number;
