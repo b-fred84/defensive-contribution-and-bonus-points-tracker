@@ -1,6 +1,13 @@
-import type { Team, Fixture, FixtureApi, Player, PlayerStats } from "./Types";
+import type {
+  Team,
+  Fixture,
+  FixtureApi,
+  LivePlayer,
+  StaticPlayer,
+  FixturePlayer,
+} from "./types";
 
-export const fetchFixturesForCurrentGameweek = async (
+export const fetchFixturesAndPlayersForCurrentGameweek = async (
   gameweek: number
 ): Promise<Fixture[]> => {
   try {
@@ -15,11 +22,12 @@ export const fetchFixturesForCurrentGameweek = async (
       teamsMap.set(team.id, team.name);
     });
 
+    //fetch fixtures
     const fixtureResponse = await fetch("fpl/api/fixtures/");
     if (!fixtureResponse) throw new Error("Failed to fetch fixtures");
     const fixtureData: FixtureApi[] = await fixtureResponse.json();
 
-    const gwFixtures = fixtureData
+    const gwFixtures: Fixture[] = fixtureData
       .filter((f) => f.event === gameweek)
       .map((f) => ({
         id: f.id,
@@ -29,10 +37,50 @@ export const fetchFixturesForCurrentGameweek = async (
         kickoff_time: f.kickoff_time,
       }));
 
-    console.log("Fixtures for gameweek", gameweek, gwFixtures);
-    return gwFixtures;
+    // Fetch static players data (names etc from bottstrapStatic endpoint)
+    const staticPlayersRes = await fetch("/fpl/api/bootstrap-static/");
+    const staticPlayersData = await staticPlayersRes.json();
+    const staticPlayers: StaticPlayer[] = staticPlayersData.elements;
+
+    // Fetch live players
+    const livePlayersRes = await fetch(`/fpl/api/event/${gameweek}/live/`);
+    const livePlayersData = await livePlayersRes.json();
+    const livePlayers: LivePlayer[] = livePlayersData.elements;
+
+    // Merge players into fixtures
+    const fixturesWithPlayers = gwFixtures.map((fix) => {
+      const playersForFixture: FixturePlayer[] = livePlayers
+        .filter(
+          (lp) =>
+            lp.stats.minutes > 0 && lp.explain.some((e) => e.fixture === fix.id)
+        )
+        .map((lp) => {
+          const sp = staticPlayers.find((sp) => sp.id === lp.id);
+          if (!sp) return null;
+
+          return sp
+            ? {
+                id: lp.id,
+                web_name: sp.web_name,
+                team: sp.team,
+                element_type: sp.element_type,
+                minutes: lp.stats.minutes,
+                total_points: lp.stats.total_points,
+                bps: lp.stats.bps,
+                defensive_contribution: lp.stats.defensive_contribution,
+                fixture: fix.id,
+              }
+            : null;
+        })
+        .filter((p): p is FixturePlayer => p !== null);
+
+      return { ...fix, players: playersForFixture };
+    });
+
+    console.log("Fixtures with players:", fixturesWithPlayers);
+    return fixturesWithPlayers;
   } catch (err) {
-    console.log(err);
+    console.error(err);
     return [];
   }
 };
